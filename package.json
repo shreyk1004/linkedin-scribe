@@ -1,0 +1,27 @@
+{
+  "name": "linkedin-scribe",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node index.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shreyk1004/linkedin-scribe.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/shreyk1004/linkedin-scribe/issues"
+  },
+  "homepage": "https://github.com/shreyk1004/linkedin-scribe#readme",
+  "description": "",
+  "dependencies": {
+    "csv-writer": "^1.6.0",
+    "dotenv": "^16.4.7",
+    "puppeteer": "^24.3.0"
+  }
+}
