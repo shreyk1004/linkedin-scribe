@@ -181,20 +181,64 @@ async function findProfilesInCompanyPage(page, maxProfiles, companyName) {
   const profileUrls = new Set();
   let previousHeight = 0;
   let scrollAttempts = 0;
-  const maxScrollAttempts = 10;
+  const maxScrollAttempts = 15; // Increased from 10 to give more chances to find profiles
   
   console.log('Scrolling to find employee profiles...');
   
-  // First check if we're already on a page with profiles
+  // First check if we're on a page with profiles
+  console.log('Looking for profile links on the page...');
+  
+  // Try multiple selectors that might contain profile links
   const initialProfiles = await page.evaluate(() => {
-    const links = Array.from(document.querySelectorAll('a.app-aware-link'))
-      .filter(a => a.href && a.href.includes('/in/'))
-      .map(a => a.href);
-    return [...new Set(links)];
+    // More comprehensive set of selectors for LinkedIn profile links
+    const selectors = [
+      'a.app-aware-link[href*="/in/"]', // Standard profile links
+      'a[href*="/in/"]', // Any link with /in/ path
+      '.org-people-profile-card__profile-title a', // Profile cards on company pages
+      '.org-people-profile-card a', // Newer profile card links
+      '.org-people__list-item a', // List items in people section
+      'a[data-control-name="people_profile_card_name_link"]', // Name links in profile cards
+      '.feed-shared-update-v2__description-wrapper a[href*="/in/"]' // Links in feed updates
+    ];
+    
+    let links = [];
+    
+    // Try each selector and collect links
+    for (const selector of selectors) {
+      const elements = document.querySelectorAll(selector);
+      if (elements.length > 0) {
+        console.log(`Found ${elements.length} elements with selector: ${selector}`);
+      }
+      
+      elements.forEach(element => {
+        if (element.href && element.href.includes('/in/')) {
+          links.push({
+            url: element.href,
+            text: element.innerText.trim() || 'Profile'
+          });
+        }
+      });
+    }
+    
+    // Remove duplicates by URL
+    const uniqueLinks = Array.from(
+      new Map(links.map(link => [link.url, link])).values()
+    );
+    
+    return uniqueLinks;
   });
   
-  initialProfiles.forEach(url => profileUrls.add(url));
-  console.log(`Found ${profileUrls.size} profiles without scrolling`);
+  // Log diagnostic information
+  console.log(`Initial scan found ${initialProfiles.length} potential profile links`);
+  if (initialProfiles.length > 0) {
+    console.log('Sample profile links found:');
+    initialProfiles.slice(0, 3).forEach(profile => {
+      console.log(`- ${profile.text}: ${profile.url}`);
+    });
+  }
+  
+  initialProfiles.forEach(profile => profileUrls.add(profile.url));
+  console.log(`Found ${profileUrls.size} unique profile URLs without scrolling`);
   
   // If we already have enough profiles, return them
   if (profileUrls.size >= maxProfiles) {
@@ -205,10 +249,12 @@ async function findProfilesInCompanyPage(page, maxProfiles, companyName) {
   while (profileUrls.size < maxProfiles && scrollAttempts < maxScrollAttempts) {
     scrollAttempts++;
     
+    console.log(`Scroll attempt #${scrollAttempts}: Looking for more profiles...`);
+    
     // Scroll down to load more content
     previousHeight = await page.evaluate('document.body.scrollHeight');
-    await page.evaluate('window.scrollBy(0, 500)');
-    await delay(SCROLL_DELAY);
+    await page.evaluate('window.scrollBy(0, 800)'); // Scroll a bit more aggressively
+    await delay(SCROLL_DELAY * 1.5); // Wait a bit longer to ensure content loads
     
     // Check if we've reached the bottom
     const currentHeight = await page.evaluate('document.body.scrollHeight');
@@ -217,21 +263,82 @@ async function findProfilesInCompanyPage(page, maxProfiles, companyName) {
       break;
     }
     
-    // Extract any new profile URLs after scrolling
+    // Extract any new profile URLs after scrolling using the same comprehensive approach
     const newProfiles = await page.evaluate(() => {
-      const links = Array.from(document.querySelectorAll('a.app-aware-link'))
-        .filter(a => a.href && a.href.includes('/in/'))
-        .map(a => a.href);
-      return [...new Set(links)];
+      // Same selectors as above
+      const selectors = [
+        'a.app-aware-link[href*="/in/"]',
+        'a[href*="/in/"]',
+        '.org-people-profile-card__profile-title a',
+        '.org-people-profile-card a',
+        '.org-people__list-item a',
+        'a[data-control-name="people_profile_card_name_link"]',
+        '.feed-shared-update-v2__description-wrapper a[href*="/in/"]'
+      ];
+      
+      let links = [];
+      
+      for (const selector of selectors) {
+        const elements = document.querySelectorAll(selector);
+        elements.forEach(element => {
+          if (element.href && element.href.includes('/in/')) {
+            links.push({
+              url: element.href,
+              text: element.innerText.trim() || 'Profile'
+            });
+          }
+        });
+      }
+      
+      // Remove duplicates by URL
+      const uniqueLinks = Array.from(
+        new Map(links.map(link => [link.url, link])).values()
+      );
+      
+      return uniqueLinks;
     });
     
     const previousSize = profileUrls.size;
-    newProfiles.forEach(url => profileUrls.add(url));
+    newProfiles.forEach(profile => profileUrls.add(profile.url));
     
     console.log(`Scroll #${scrollAttempts}: Found ${profileUrls.size} profiles total (${profileUrls.size - previousSize} new)`);
+    
+    // If we haven't found any new profiles in 3 consecutive attempts, try clicking "Show more results"
+    if (previousSize === profileUrls.size && scrollAttempts % 3 === 0) {
+      console.log('Trying to click "Show more" button...');
+      try {
+        // Try to find and click "Show more" button
+        const clicked = await page.evaluate(() => {
+          const showMoreButtons = Array.from(document.querySelectorAll('button, .artdeco-button'))
+            .filter(button => {
+              const text = button.innerText.toLowerCase();
+              return text.includes('show more') || 
+                     text.includes('see more') || 
+                     text.includes('load more') ||
+                     text.includes('view more');
+            });
+          
+          if (showMoreButtons.length > 0) {
+            showMoreButtons[0].click();
+            return true;
+          }
+          return false;
+        });
+        
+        if (clicked) {
+          console.log('Clicked "Show more" button, waiting for content to load...');
+          await delay(3000); // Wait longer for content to load after clicking
+        }
+      } catch (error) {
+        console.log('No "Show more" button found or error clicking it');
+      }
+    }
   }
   
-  return Array.from(profileUrls).slice(0, maxProfiles);
+  const foundProfiles = Array.from(profileUrls).slice(0, maxProfiles);
+  console.log(`Returning ${foundProfiles.length} profile URLs for processing`);
+  
+  return foundProfiles;
 }
 
 /**
@@ -248,10 +355,44 @@ async function extractProfileInfo(browser, profileUrl, targetCompany) {
     
     // Extract name
     const name = await page.evaluate(() => {
-      const nameElement = document.querySelector('h1.text-heading-xlarge');
-      return nameElement ? nameElement.innerText.trim() : 'Unknown';
+      // Try multiple selectors for the name as LinkedIn's UI changes frequently
+      const nameSelectors = [
+        'h1.text-heading-xlarge',
+        'h1.inline.t-24.t-black.t-normal.break-words',
+        'h1.text-body-mega',
+        'h1.pv-top-card-section__name',
+        'h1.t-24.t-black.t-normal'
+      ];
+      
+      for (const selector of nameSelectors) {
+        const nameElement = document.querySelector(selector);
+        if (nameElement) {
+          return nameElement.innerText.trim();
+        }
+      }
+      
+      return 'Unknown';
     });
     console.log(`Processing profile: ${name}`);
+    
+    // Extract headline/title
+    const headline = await page.evaluate(() => {
+      const titleSelectors = [
+        '.ph5.pb5 .text-body-medium',
+        '.pv-top-card-section__headline',
+        '.text-body-medium.break-words',
+        '.ph5.pb5 span.text-body-medium'
+      ];
+      
+      for (const selector of titleSelectors) {
+        const titleElement = document.querySelector(selector);
+        if (titleElement) {
+          return titleElement.innerText.trim();
+        }
+      }
+      
+      return '';
+    });
     
     // Scroll to experience section
     console.log('Scrolling to experience section...');
@@ -316,6 +457,7 @@ async function extractProfileInfo(browser, profileUrl, targetCompany) {
     
     return {
       name,
+      headline,
       workSummary
     };
   } catch (error) {
@@ -374,6 +516,7 @@ async function saveToCSV(data, companyName) {
     path: filePath,
     header: [
       { id: 'name', title: 'Name' },
+      { id: 'headline', title: 'Headline/Title' },
       { id: 'workSummary', title: 'Work Summary' }
     ]
   });
