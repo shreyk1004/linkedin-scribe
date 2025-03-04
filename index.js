@@ -49,73 +49,93 @@ async function main() {
     console.log('-------------------------------------------------------------\n');
     
     let browser;
+    
+    // Try to connect to the existing browser instance
+    console.log('Attempting to connect to Chrome on port 9222...');
     try {
-      // Try to connect to the existing browser instance
-      console.log('Attempting to connect to Chrome on port 9222...');
+      // Explicitly connect to the existing browser with proper options
       browser = await puppeteer.connect({
         browserURL: 'http://localhost:9222',
         defaultViewport: null
       });
       console.log('Successfully connected to Chrome browser!');
+      
+      // Check if user is logged into LinkedIn
+      console.log('Checking if you are logged into LinkedIn...');
+      const pages = await browser.pages();
+      let linkedInPage = null;
+      
+      // First look for an existing LinkedIn tab
+      for (const page of pages) {
+        const url = page.url();
+        if (url.includes('linkedin.com')) {
+          linkedInPage = page;
+          console.log('Found existing LinkedIn tab.');
+          break;
+        }
+      }
+      
+      // If no LinkedIn tab found, open a new one to check login status
+      if (!linkedInPage) {
+        console.log('Opening LinkedIn to check login status...');
+        linkedInPage = await browser.newPage();
+        await linkedInPage.goto(LINKEDIN_URL, { waitUntil: 'networkidle2' });
+      }
+      
+      // Check if logged in by looking for common logged-in elements
+      const isLoggedIn = await linkedInPage.evaluate(() => {
+        // Look for elements that would indicate a logged-in state
+        const profileNavElement = document.querySelector('.global-nav__me-photo') || 
+                                 document.querySelector('.nav-item__profile-member-photo') ||
+                                 document.querySelector('.presence-entity__image');
+        
+        // Look for sign-in button which would indicate NOT logged in
+        const signInButton = document.querySelector('.nav__button-secondary') ||
+                            document.querySelector('.sign-in-form');
+        
+        return !!profileNavElement && !signInButton;
+      });
+      
+      if (!isLoggedIn) {
+        console.log('\n⚠️ You do not appear to be logged into LinkedIn.');
+        console.log('Please log in to LinkedIn in the browser window.');
+        console.log('After logging in, press Enter to continue...');
+        
+        // Keep the LinkedIn page open for login
+        await new Promise(resolve => {
+          const readline = require('readline').createInterface({
+            input: process.stdin,
+            output: process.stdout
+          });
+          readline.question('Press Enter after you have logged in...', () => {
+            readline.close();
+            resolve();
+          });
+        });
+        
+        // Don't close the LinkedIn page if it was newly opened
+        if (!linkedInPage.isClosed()) {
+          console.log('Continuing with the logged-in session...');
+        }
+      } else {
+        console.log('You are already logged into LinkedIn. Good!');
+        // Close the LinkedIn page we opened for checking if it wasn't already open
+        if (linkedInPage && linkedInPage.url() === LINKEDIN_URL) {
+          await linkedInPage.close();
+        }
+      }
+      
     } catch (error) {
       console.error('Failed to connect to Chrome browser:', error.message);
-      console.log('\nThere are two options to fix this:');
-      console.log('\nOption 1: Start Chrome manually with remote debugging enabled:');
+      console.log('\nMake sure Chrome is running with remote debugging enabled:');
       console.log('Mac: Open Terminal and run:');
       console.log('"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --remote-debugging-port=9222 --user-data-dir="/tmp/chrome-profile"');
       console.log('\nWindows: Open Command Prompt and run:');
       console.log('"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" --remote-debugging-port=9222 --user-data-dir="%TEMP%\\chrome-profile"');
       console.log('\nLinux: Open Terminal and run:');
       console.log('google-chrome --remote-debugging-port=9222 --user-data-dir="/tmp/chrome-profile"');
-      console.log('\nOption 2: Let the script launch Chrome for you? (y/n)');
-      
-      const readline = require('readline').createInterface({
-        input: process.stdin,
-        output: process.stdout
-      });
-      
-      const answer = await new Promise(resolve => {
-        readline.question('> ', resolve);
-      });
-      readline.close();
-      
-      if (answer.toLowerCase() === 'y') {
-        console.log('Launching Chrome browser...');
-        try {
-          browser = await puppeteer.launch({
-            headless: false,
-            defaultViewport: null,
-            args: [
-              '--remote-debugging-port=9222',
-              '--no-sandbox',
-              '--disable-setuid-sandbox',
-              '--disable-dev-shm-usage'
-            ],
-            ignoreDefaultArgs: ['--enable-automation']
-          });
-          
-          console.log('Chrome launched successfully!');
-          console.log('IMPORTANT: You need to log in to LinkedIn manually in the opened browser.');
-          console.log('After logging in, press Enter to continue...');
-          
-          await new Promise(resolve => {
-            const rl = require('readline').createInterface({
-              input: process.stdin,
-              output: process.stdout
-            });
-            rl.question('Press Enter to continue after logging in...', () => {
-              rl.close();
-              resolve();
-            });
-          });
-        } catch (launchError) {
-          console.error('Failed to launch Chrome:', launchError.message);
-          process.exit(1);
-        }
-      } else {
-        console.log('Exiting script. Please restart it after starting Chrome with remote debugging.');
-        process.exit(1);
-      }
+      console.log('\nAfter starting Chrome with debugging enabled, restart this script.');
+      process.exit(1);
     }
     
     // Create a new page/tab in the existing browser
